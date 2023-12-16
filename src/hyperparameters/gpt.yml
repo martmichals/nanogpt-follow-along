@@ -1,0 +1,16 @@
+batch_size:
+  value: 64
+block_size:
+  value: 256
+max_iters:
+  value: 5000
+lr:
+  value: 0.003
+n_embd:
+  value: 384
+n_head:
+  value: 6
+n_layer:
+  value: 6
+dropout:
+  value: 0.2
