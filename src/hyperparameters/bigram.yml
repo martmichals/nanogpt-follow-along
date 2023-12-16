@@ -1,0 +1,12 @@
+batch_size: 
+  value: 16
+  desc: Batch size used in training
+block_size: 
+  value: 16
+  desc: Maximum context length
+max_iters:
+  value: 24000
+  desc: Number of training iterations
+lr: 
+  value: 0.001
+  desc: Learning rate used by the optimizer

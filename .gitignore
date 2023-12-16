@@ -161,3 +161,7 @@ cython_debug/
 
 # Envs
 .env
+
+# Weights and Biases
+wandb
+artifacts
