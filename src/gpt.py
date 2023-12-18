@@ -12,8 +12,10 @@ load_dotenv()
 def main():
     # Job to train the bigram baseline
     run = wandb.init()
-    artifact = run.use_artifact('nanogpt/mini-shakespeare-text:latest')
-    data_dir = artifact.download()
+
+    # TODO: Uncomment
+    # artifact = run.use_artifact('nanogpt/mini-shakespeare-text:latest')
+    # data_dir = artifact.download()
 
     # hyperparameters
     batch_size = wandb.config.batch_size # how many independent sequences will we process in parallel?
@@ -74,47 +76,51 @@ def main():
         model.train()
         return out
 
-    class Head(nn.Module):
+    class MultiHeadAttention(nn.Module):
         """ one head of self-attention """
 
-        def __init__(self, head_size):
+        def __init__(self, num_heads, head_size):
             super().__init__()
-            self.key = nn.Linear(n_embd, head_size, bias=False)
-            self.query = nn.Linear(n_embd, head_size, bias=False)
-            self.value = nn.Linear(n_embd, head_size, bias=False)
+            self.head_size = head_size
+            self.key = nn.Linear(n_embd, num_heads*head_size, bias=False)
+            self.query = nn.Linear(n_embd, num_heads*head_size, bias=False)
+            self.value = nn.Linear(n_embd, num_heads*head_size, bias=False)
+            self.proj = nn.Linear(head_size * num_heads, n_embd)
             self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
 
             self.dropout = nn.Dropout(dropout)
+            self.dropout_proj = nn.Dropout(dropout)
 
         def forward(self, x):
             # input of size (batch, time-step, channels)
             # output of size (batch, time-step, head size)
             B,T,C = x.shape
-            k = self.key(x)   # (B,T,hs)
-            q = self.query(x) # (B,T,hs)
+            k = self.key(x).view(B, T, -1, self.head_size)   # (B,T,num_heads,head_size)
+            q = self.query(x).view(B, T, -1, self.head_size) # (B,T,num_heads,head_size)
             # compute attention scores ("affinities")
-            wei = q @ k.transpose(-2,-1) * k.shape[-1]**-0.5 # (B, T, hs) @ (B, hs, T) -> (B, T, T)
-            wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf')) # (B, T, T)
-            wei = F.softmax(wei, dim=-1) # (B, T, T)
+            wei = q.permute(0, 2, 1, 3) @ k.permute(0, 2, 3, 1) * k.shape[-1]**-0.5 # (B, num_heads, T, head_size) @ (B, num_heads, head_size, T) -> (B, num_heads, T, T)
+            wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf')) # (B, num_heads, T, T)
+            wei = F.softmax(wei, dim=-1) # (B, num_heads, T, T)
             wei = self.dropout(wei)
             # perform the weighted aggregation of the values
-            v = self.value(x) # (B,T,hs)
-            out = wei @ v # (B, T, T) @ (B, T, hs) -> (B, T, hs)
+            v = self.value(x).view(B, T, -1, self.head_size) # (B,T,num_heads,head_size)
+            wei_v = wei @ v.permute(0, 2, 1, 3) # (B, T, T) @ (B, num_heads, T, head_size) -> (B, num_heads, T, head_size)
+            proj_v = self.proj(wei_v.permute(0, 2, 1, 3).reshape(B, T, -1))
+            out = self.dropout(proj_v)
             return out
 
-    class MultiHeadAttention(nn.Module):
-        """ multiple heads of self-attention in parallel """
+    # class MultiHeadAttention(nn.Module):
+    #     """ multiple heads of self-attention in parallel """
 
-        def __init__(self, num_heads, head_size):
-            super().__init__()
-            self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
-            self.proj = nn.Linear(head_size * num_heads, n_embd)
-            self.dropout = nn.Dropout(dropout)
+    #     def __init__(self, num_heads, head_size):
+    #         super().__init__()
+    #         self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
+    #         self.dropout = nn.Dropout(dropout)
 
-        def forward(self, x):
-            out = torch.cat([h(x) for h in self.heads], dim=-1)
-            out = self.dropout(self.proj(out))
-            return out
+    #     def forward(self, x):
+    #         out = torch.cat([h(x) for h in self.heads], dim=-1)
+    #         out = self.dropout(self.proj(out))
+    #         return out
 
     class FeedFoward(nn.Module):
         """ a simple linear layer followed by a non-linearity """
@@ -261,5 +267,10 @@ if __name__ == '__main__':
 
     # Configure W&B
     os.environ['WANDB_CONFIG_PATHS'] = args.config_path
+
+    # TODO: Debug, remove
+    # os.environ["WANDB_MODE"] = "offline"
+
+    # Run training
     main()
         
