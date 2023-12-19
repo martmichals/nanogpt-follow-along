@@ -1,4 +1,5 @@
 import os
+import math
 import wandb
 import torch
 import argparse
@@ -81,32 +82,39 @@ def main():
 
         def __init__(self, num_heads, head_size):
             super().__init__()
-            self.head_size = head_size
-            self.key = nn.Linear(n_embd, num_heads*head_size, bias=False)
-            self.query = nn.Linear(n_embd, num_heads*head_size, bias=False)
-            self.value = nn.Linear(n_embd, num_heads*head_size, bias=False)
-            self.proj = nn.Linear(head_size * num_heads, n_embd)
-            self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
+            assert n_embd % num_heads == 0
 
-            self.dropout = nn.Dropout(dropout)
-            self.dropout_proj = nn.Dropout(dropout)
+            # Scalars
+            self.num_heads = num_heads
+
+            # Linear layers
+            self.c_attn = nn.Linear(n_embd, 3*n_embd, bias=False)
+            self.proj = nn.Linear(head_size*num_heads, n_embd)
+
+            # Dropout layers
+            self.attn_dropout = nn.Dropout(dropout)
+            self.ff_dropoout = nn.Dropout(dropout)
+
+            # Causal attention mask
+            self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
 
         def forward(self, x):
             # input of size (batch, time-step, channels)
-            # output of size (batch, time-step, head size)
-            B,T,C = x.shape
-            k = self.key(x).view(B, T, -1, self.head_size)   # (B,T,num_heads,head_size)
-            q = self.query(x).view(B, T, -1, self.head_size) # (B,T,num_heads,head_size)
+            B, T, C = x.shape
+            k, q, v = self.c_attn(x).split(n_embd, dim=2)
+            k = k.view(B, T, self.num_heads, C // self.num_heads).transpose(1, 2)   # (B,T,num_heads,head_size)
+            q = q.view(B, T, self.num_heads, C // self.num_heads).transpose(1, 2)   # (B,T,num_heads,head_size)
+            v = v.view(B, T, self.num_heads, C // self.num_heads).transpose(1, 2)   # (B,T,num_heads,head_size)
+
             # compute attention scores ("affinities")
-            wei = q.permute(0, 2, 1, 3) @ k.permute(0, 2, 3, 1) * k.shape[-1]**-0.5 # (B, num_heads, T, head_size) @ (B, num_heads, head_size, T) -> (B, num_heads, T, T)
-            wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf')) # (B, num_heads, T, T)
-            wei = F.softmax(wei, dim=-1) # (B, num_heads, T, T)
-            wei = self.dropout(wei)
+            wei = q @ k.transpose(-2, -1) * (1 / math.sqrt(k.shape[-1])) # (B, num_heads, T, head_size) @ (B, num_heads, head_size, T) -> (B, num_heads, T, T)
+            wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf'))    # (B, num_heads, T, T)
+            wei = F.softmax(wei, dim=-1)                                    # (B, num_heads, T, T)
+            wei = self.attn_dropout(wei)
+
             # perform the weighted aggregation of the values
-            v = self.value(x).view(B, T, -1, self.head_size) # (B,T,num_heads,head_size)
-            wei_v = wei @ v.permute(0, 2, 1, 3) # (B, T, T) @ (B, num_heads, T, head_size) -> (B, num_heads, T, head_size)
-            proj_v = self.proj(wei_v.permute(0, 2, 1, 3).reshape(B, T, -1))
-            out = self.dropout(proj_v)
+            y = wei @ v # (B, T, T) @ (B, num_heads, T, head_size) -> (B, num_heads, T, head_size)
+            out = self.ff_dropoout(self.proj(y.transpose(1, 2).reshape(B, T, -1)))
             return out
 
     # class MultiHeadAttention(nn.Module):
