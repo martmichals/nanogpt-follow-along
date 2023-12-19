@@ -89,7 +89,7 @@ def main():
 
             # Linear layers
             self.c_attn = nn.Linear(n_embd, 3*n_embd, bias=False)
-            self.proj = nn.Linear(head_size*num_heads, n_embd)
+            self.ff = nn.Linear(head_size*num_heads, n_embd)
 
             # Dropout layers
             self.attn_dropout = nn.Dropout(dropout)
@@ -107,14 +107,14 @@ def main():
             v = v.view(B, T, self.num_heads, C // self.num_heads).transpose(1, 2)   # (B,T,num_heads,head_size)
 
             # compute attention scores ("affinities")
-            wei = q @ k.transpose(-2, -1) * (1 / math.sqrt(k.shape[-1])) # (B, num_heads, T, head_size) @ (B, num_heads, head_size, T) -> (B, num_heads, T, T)
+            wei = q @ k.transpose(-2, -1) * (1 / math.sqrt(k.shape[-1]))    # (B, num_heads, T, head_size) @ (B, num_heads, head_size, T) -> (B, num_heads, T, T)
             wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf'))    # (B, num_heads, T, T)
             wei = F.softmax(wei, dim=-1)                                    # (B, num_heads, T, T)
             wei = self.attn_dropout(wei)
 
             # perform the weighted aggregation of the values
             y = wei @ v # (B, T, T) @ (B, num_heads, T, head_size) -> (B, num_heads, T, head_size)
-            out = self.ff_dropoout(self.proj(y.transpose(1, 2).reshape(B, T, -1)))
+            out = self.ff_dropoout(self.ff(y.transpose(1, 2).reshape(B, T, -1)))
             return out
 
     # class MultiHeadAttention(nn.Module):
